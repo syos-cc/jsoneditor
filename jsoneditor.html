@@ -1,0 +1,877 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>json editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --line: #9b77b5;
+    --page-border: #222;
+    --grid: #eee;
+
+    --object: #ded2e6;
+    --array: #d9e8fa;
+    --string: #fff0c8;
+    --number: #d8ecd5;
+    --boolean: #d7f4ef;
+
+    --drop: #ff9800;
+    --header-height: 40px;
+    --label-width: 120px;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 10px 10px;
+    color: #000;
+  }
+
+  .app {
+    min-height: 100vh;
+    border: 1px solid var(--page-border);
+    background: rgba(255, 255, 255, .92);
+  }
+
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    height: 42px;
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid var(--page-border);
+    background: #fff;
+  }
+
+  button,
+  .fileButton {
+    min-width: 82px;
+    border: 0;
+    border-right: 1px solid var(--page-border);
+    background: #fff;
+    cursor: pointer;
+    font: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 14px;
+  }
+
+  button:hover,
+  .fileButton:hover {
+    filter: brightness(.95);
+  }
+
+  input[type=file] {
+    display: none;
+  }
+
+  .spacer {
+    width: 80px;
+  }
+
+  .add.string { background: var(--string); }
+  .add.number { background: var(--number); }
+  .add.boolean { background: var(--boolean); }
+  .add.array { background: var(--array); }
+  .add.object { background: var(--object); }
+
+  .title {
+    position: sticky;
+    top: 42px;
+    z-index: 999;
+    text-align: center;
+    font-size: 13px;
+    margin: 0;
+    padding: 10px 0;
+    background: rgba(255,255,255,.98);
+    border-bottom: 1px solid var(--page-border);
+  }
+
+  #editor {
+    margin: 0 22px 40px;
+    min-height: 320px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .35);
+    padding: 0;
+  }
+
+  /*
+    Grundidee:
+    - Der Rahmen kommt hauptsächlich vom Container.
+    - Kinder erhalten nur horizontale Trennlinien zwischen Geschwistern.
+    - Dadurch entstehen keine störenden Querlinien an verschachtelten Objectsn/Arrays.
+  */
+
+  .node {
+    position: relative;
+    min-height: var(--header-height);
+    display: grid;
+    background: #fff;
+  }
+
+  .node.object { background: var(--object); }
+  .node.array { background: var(--array); }
+  .node.string { background: var(--string); }
+  .node.number { background: var(--number); }
+  .node.boolean { background: var(--boolean); }
+
+  .nodeHeader {
+    position: relative;
+    min-height: var(--header-height);
+    padding: 10px 30px 8px 8px;
+    text-align: center;
+    display: grid;
+    place-items: center;
+    cursor: grab;
+    user-select: none;
+    overflow-wrap: anywhere;
+  }
+
+  .editable {
+    min-width: 20px;
+    outline: none;
+  }
+
+  .editable:focus {
+    background: rgba(255, 255, 255, .75);
+    box-shadow: inset 0 0 0 1px #000;
+  }
+
+  .delete {
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    border: 1px solid #777;
+    background: rgba(255, 255, 255, .75);
+    padding: 0;
+    line-height: 16px;
+    font-size: 12px;
+  }
+
+  .children {
+    display: grid;
+    grid-template-columns: var(--label-width) 1fr;
+    min-height: var(--header-height);
+  }
+
+  .children::before {
+    grid-column: 1;
+    grid-row: 1 / 999;
+    display: grid;
+    place-items: center;
+    border-right: 1px solid var(--line);
+    color: #333;
+  }
+
+  .children.objectChildren::before {
+    content: "{ }";
+    background: var(--object);
+  }
+
+  .children.arrayChildren::before {
+    content: "[ ]";
+    background: var(--array);
+  }
+
+  /*
+    Trennlinien nur im rechten Inhaltsbereich.
+    Dadurch wird z. B. die Zahl 2 innerhalb von Array D sauber abgegrenzt,
+    aber die Linie läuft nicht quer durch das linke Array-/Object-Feld.
+  */
+  .children > .node {
+    grid-column: 2;
+    border-top: 1px solid var(--line);
+  }
+
+  .node.dragging {
+    opacity: .45;
+  }
+
+  .dropTarget {
+    outline: 3px solid var(--drop);
+    outline-offset: -3px;
+  }
+
+  .hint {
+    margin: 10px 22px;
+    font-size: 12px;
+    color: #333;
+  }
+
+  .helpOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: none;
+    background: rgba(0, 0, 0, .35);
+  }
+
+  .helpOverlay.visible {
+    display: grid;
+    place-items: center;
+  }
+
+  .helpBox {
+    width: min(760px, calc(100vw - 36px));
+    max-height: calc(100vh - 90px);
+    overflow: auto;
+    background: #fff;
+    border: 1px solid var(--page-border);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, .25);
+  }
+
+  .helpHeader {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    border-bottom: 1px solid var(--page-border);
+    padding: 10px 14px;
+    font-weight: bold;
+  }
+
+  .helpClose {
+    min-width: 32px;
+    height: 28px;
+    border: 1px solid #777;
+    padding: 0;
+  }
+
+  .helpContent {
+    padding: 14px 18px 18px;
+    line-height: 1.45;
+  }
+
+  .helpContent h3 {
+    margin: 16px 0 6px;
+  }
+
+  .helpContent ul {
+    margin-top: 6px;
+    padding-left: 22px;
+  }
+
+  .helpContent code {
+    background: #f2f2f2;
+    padding: 1px 4px;
+    border: 1px solid #ddd;
+  }
+
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="toolbar">
+    <label class="fileButton">
+      Upload
+      <input id="fileInput" type="file" accept="application/json,.json">
+    </label>
+
+    <button id="DownloadBtn">Download</button>
+
+    <button id="readmeBtn">README</button>
+
+    <button class="add string" draggable="true" data-type="string">Add String</button>
+    <button class="add number" draggable="true" data-type="number">Add Number</button>
+    <button class="add boolean" draggable="true" data-type="boolean">Add Boolean</button>
+    <button class="add array" draggable="true" data-type="array">Add Array</button>
+    <button class="add object" draggable="true" data-type="object">Add Object</button>
+  </div>
+
+  <div class="title">Structure</div>
+  <div id="editor"></div>
+
+  <div class="hint">
+    Usage: Feld aus der oberen Leiste ziehen. valuee und key anklicken zum Editing.
+    Objects und Arrays können andere Felder aufnehmen.
+  </div>
+
+  <div id="helpOverlay" class="helpOverlay">
+    <div class="helpBox" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="helpHeader">
+        <span id="helpTitle">README / Help</span>
+        <button id="helpCloseBtn" class="helpClose" title="Schließen">×</button>
+      </div>
+
+      
+<div class="helpContent">
+<h3>Overview</h3>
+<p>This page is a standalone JSON editor. You can load a JSON file, edit it visually as a structured diagram, and download it again.</p>
+
+<h3>Upload</h3>
+<ul>
+<li>Use <b>Upload</b> to open a local <code>.json</code> file.</li>
+<li>The file is processed entirely in your browser and is never uploaded.</li>
+</ul>
+
+<h3>Download</h3>
+<ul>
+<li>Use <b>Download</b> to save the current document as <code>edited.json</code>.</li>
+<li>String, Number, Boolean, Array and Object are exported as native JSON types.</li>
+</ul>
+
+<h3>Adding Elements</h3>
+<ul>
+<li><b>Add String</b> – adds a string value.</li>
+<li><b>Add Number</b> – adds a numeric value.</li>
+<li><b>Add Boolean</b> – adds a boolean value.</li>
+<li><b>Add Array</b> – adds an array.</li>
+<li><b>Add Object</b> – adds an object.</li>
+</ul>
+<p>Drag a new element from the toolbar into an Object or Array.</p>
+
+<h3>Editing</h3>
+<ul>
+<li>Click a field to edit its key or value.</li>
+<li>Object entries are displayed as <code>Key: Value</code>.</li>
+<li>Array elements have no key.</li>
+<li>For Boolean values, only <code>true</code> evaluates to <code>true</code>; every other value becomes <code>false</code>.</li>
+</ul>
+
+<h3>Moving</h3>
+<ul>
+<li>Existing elements can be moved using drag &amp; drop.</li>
+<li>Moving an element into an Array removes its key.</li>
+<li>Moving an element into an Object automatically creates a key if needed.</li>
+</ul>
+
+<h3>Deleting</h3>
+<ul>
+<li>Every element except the root object has a <b>×</b> button.</li>
+<li>The selected element and all of its children are removed.</li>
+</ul>
+
+<h3>Path Display</h3>
+<ul>
+<li>Click any element to display its path at the top of the page.</li>
+<li>The path format follows <code>jq</code>, for example <code>.F.J[1]</code>.</li>
+<li><code>.</code> represents the root object.</li>
+</ul>
+
+<h3>Notes</h3>
+<ul>
+<li>No server is required. The editor runs directly as a local HTML file.</li>
+<li>Currently <code>null</code> values are imported as empty strings.</li>
+<li>Undo/Redo is not implemented yet.</li>
+</ul>
+</div>
+</div>
+</div>
+
+</div>
+
+<script>
+let model = {
+  type: "object",
+  key: "",
+  children: [
+    { type: "string", key: "A", value: "B" },
+    { type: "number", key: "C", value: 1 },
+    {
+      type: "array",
+      key: "D",
+      children: [
+        { type: "number", key: "", value: 2 },
+        { type: "string", key: "", value: "E" }
+      ]
+    },
+    {
+      type: "object",
+      key: "F",
+      children: [
+        { type: "string", key: "G", value: "H" },
+        { type: "number", key: "I", value: 2 },
+        {
+          type: "array",
+          key: "J",
+          children: [
+            { type: "number", key: "", value: 3 },
+            { type: "number", key: "", value: 4 }
+          ]
+        }
+      ]
+    }
+  ]
+};
+
+let draggedPath = null;
+let draggedNewType = null;
+
+const editor = document.getElementById("editor");
+const titleBar = document.querySelector(".title");
+let selectedPathText = "Structure";
+
+function uuidKey() {
+  return "key_" + Math.random().toString(36).slice(2, 7);
+}
+
+function defaultNode(type) {
+  if (type === "string") {
+    return { type, key: uuidKey(), value: "Text" };
+  }
+
+  if (type === "number") {
+    return { type, key: uuidKey(), value: 0 };
+  }
+
+  if (type === "boolean") {
+    return { type, key: uuidKey(), value: true };
+  }
+
+  if (type === "array") {
+    return { type, key: uuidKey(), children: [] };
+  }
+
+  if (type === "object") {
+    return { type, key: uuidKey(), children: [] };
+  }
+}
+
+function getNode(path) {
+  let node = model;
+
+  for (const index of path) {
+    node = node.children[index];
+  }
+
+  return node;
+}
+
+function getParent(path) {
+  if (path.length === 0) {
+    return null;
+  }
+
+  return getNode(path.slice(0, -1));
+}
+
+function removeNode(path) {
+  const parent = getParent(path);
+
+  if (!parent) {
+    return null;
+  }
+
+  return parent.children.splice(path[path.length - 1], 1)[0];
+}
+
+function insertNode(parentPath, node, index = null) {
+  const parent = getNode(parentPath);
+
+  if (!parent.children) {
+    parent.children = [];
+  }
+
+  if (index === null || index > parent.children.length) {
+    parent.children.push(node);
+  } else {
+    parent.children.splice(index, 0, node);
+  }
+}
+
+function pathToString(path) {
+  return path.join(".");
+}
+
+function stringToPath(str) {
+  if (!str) {
+    return [];
+  }
+
+  return str.split(".").map(Number);
+}
+
+function isDescendant(parentPath, childPath) {
+  return parentPath.length <= childPath.length &&
+    parentPath.every((value, index) => value === childPath[index]);
+}
+
+function render() {
+  titleBar.textContent = selectedPathText;
+  editor.innerHTML = "";
+  editor.appendChild(renderNode(model, []));
+}
+
+function jqPathFor(path) {
+  if (path.length === 0) {
+    return ".";
+  }
+
+  let result = "";
+  let current = model;
+
+  for (const index of path) {
+    const parent = current;
+    const child = parent.children[index];
+
+    if (parent.type === "object") {
+      const key = child.key || "";
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        result += "." + key;
+      } else {
+        result += "[" + JSON.stringify(key) + "]";
+      }
+    }
+
+    if (parent.type === "array") {
+      result += "[" + index + "]";
+    }
+
+    current = child;
+  }
+
+  return result || ".";
+}
+
+function renderNode(node, path) {
+  const el = document.createElement("div");
+  el.className = "node " + node.type;
+  el.dataset.path = pathToString(path);
+  el.draggable = path.length > 0;
+
+  const header = document.createElement("div");
+  header.className = "nodeHeader";
+
+  const content = document.createElement("span");
+  content.className = "editable";
+  content.contentEditable = "true";
+  content.spellcheck = false;
+  content.textContent = labelFor(node, path);
+
+  content.addEventListener("blur", () => {
+    updateNodeFromLabel(node, path, content.textContent);
+  });
+
+  content.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      content.blur();
+    }
+  });
+
+  header.appendChild(content);
+
+  if (path.length > 0) {
+    const del = document.createElement("button");
+    del.className = "delete";
+    del.textContent = "×";
+    del.title = "Delete";
+
+    del.addEventListener("click", event => {
+      event.stopPropagation();
+      removeNode(path);
+      render();
+    });
+
+    header.appendChild(del);
+  }
+
+  el.appendChild(header);
+
+  header.addEventListener("click", event => {
+    event.stopPropagation();
+    selectedPathText = jqPathFor(path);
+    titleBar.textContent = selectedPathText;
+  });
+
+  if (node.type === "object" || node.type === "array") {
+    const children = document.createElement("div");
+    children.className = "children " + node.type + "Children";
+
+    for (let i = 0; i < node.children.length; i++) {
+      children.appendChild(renderNode(node.children[i], [...path, i]));
+    }
+
+    el.appendChild(children);
+  }
+
+  el.addEventListener("dragstart", event => {
+    if (path.length === 0) {
+      event.preventDefault();
+      return;
+    }
+
+    draggedPath = path;
+    draggedNewType = null;
+
+    event.dataTransfer.setData("text/plain", "existing");
+    el.classList.add("dragging");
+  });
+
+  el.addEventListener("dragend", () => {
+    el.classList.remove("dragging");
+  });
+
+  el.addEventListener("dragover", event => {
+    if (node.type !== "object" && node.type !== "array") {
+      return;
+    }
+
+    event.preventDefault();
+    el.classList.add("dropTarget");
+  });
+
+  el.addEventListener("dragleave", () => {
+    el.classList.remove("dropTarget");
+  });
+
+  el.addEventListener("drop", event => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    el.classList.remove("dropTarget");
+
+    if (node.type !== "object" && node.type !== "array") {
+      return;
+    }
+
+    const targetPath = stringToPath(el.dataset.path);
+
+    if (draggedNewType) {
+      const newNode = defaultNode(draggedNewType);
+
+      if (node.type === "array") {
+        newNode.key = "";
+      }
+
+      insertNode(targetPath, newNode);
+    } else if (draggedPath) {
+      if (isDescendant(draggedPath, targetPath)) {
+        return;
+      }
+
+      const movedNode = removeNode(draggedPath);
+
+      if (getNode(targetPath).type === "array") {
+        movedNode.key = "";
+      }
+
+      if (getNode(targetPath).type === "object" && !movedNode.key) {
+        movedNode.key = uuidKey();
+      }
+
+      insertNode(targetPath, movedNode);
+    }
+
+    draggedPath = null;
+    draggedNewType = null;
+
+    render();
+  });
+
+  return el;
+}
+
+function labelFor(node, path) {
+  const parent = getParent(path);
+  const showKey = parent && parent.type === "object";
+  const prefix = showKey ? (node.key || "") + ": " : "";
+
+  if (node.type === "string") {
+    return prefix + node.value;
+  }
+
+  if (node.type === "number") {
+    return prefix + node.value;
+  }
+
+  if (node.type === "boolean") {
+    return prefix + node.value;
+  }
+
+  if (node.type === "array") {
+    return prefix + "Array";
+  }
+
+  if (node.type === "object") {
+    return prefix + "Object";
+  }
+
+  return "";
+}
+
+function updateNodeFromLabel(node, path, text) {
+  const parent = getParent(path);
+  const expectsKey = parent && parent.type === "object";
+
+  if (expectsKey) {
+    const parts = text.split(":");
+    node.key = (parts.shift() || "").trim() || uuidKey();
+    text = parts.join(":").trim();
+  }
+
+  if (node.type === "string") {
+    node.value = text;
+  }
+
+  if (node.type === "number") {
+    const numberValue = Number(String(text).replace(",", "."));
+    node.value = Number.isFinite(numberValue) ? numberValue : 0;
+  }
+
+  if (node.type === "boolean") {
+    node.value = /^true$/i.test(String(text).trim());
+  }
+
+  render();
+}
+
+document.querySelectorAll(".add").forEach(button => {
+  button.addEventListener("dragstart", event => {
+    draggedNewType = button.dataset.type;
+    draggedPath = null;
+
+    event.dataTransfer.setData("text/plain", draggedNewType);
+  });
+});
+
+document.getElementById("fileInput").addEventListener("change", async event => {
+  const file = event.target.files[0];
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    const json = JSON.parse(text);
+
+    model = fromJson(json, "");
+    selectedPathText = "Structure";
+    render();
+  } catch (error) {
+    alert("JSON konnte nicht gelesen werden: " + error.message);
+  }
+});
+
+document.getElementById("DownloadBtn").addEventListener("click", () => {
+  const json = toJson(model);
+  const blob = new Blob(
+    [JSON.stringify(json, null, 2)],
+    { type: "application/json" }
+  );
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.Download = "edited.json";
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(url);
+});
+
+function fromJson(value, key) {
+  if (Array.isArray(value)) {
+    return {
+      type: "array",
+      key,
+      children: value.map(item => fromJson(item, ""))
+    };
+  }
+
+  if (value !== null && typeof value === "object") {
+    return {
+      type: "object",
+      key,
+      children: Object.entries(value).map(([childKey, childValue]) => {
+        return fromJson(childValue, childKey);
+      })
+    };
+  }
+
+  if (typeof value === "number") {
+    return { type: "number", key, value };
+  }
+
+  if (typeof value === "boolean") {
+    return { type: "boolean", key, value };
+  }
+
+  return {
+    type: "string",
+    key,
+    value: String(value ?? "")
+  };
+}
+
+function toJson(node) {
+  if (node.type === "string") {
+    return String(node.value);
+  }
+
+  if (node.type === "number") {
+    return Number(node.value);
+  }
+
+  if (node.type === "boolean") {
+    return Boolean(node.value);
+  }
+
+  if (node.type === "array") {
+    return node.children.map(child => toJson(child));
+  }
+
+  if (node.type === "object") {
+    const objectValue = {};
+
+    for (const child of node.children) {
+      objectValue[child.key || uuidKey()] = toJson(child);
+    }
+
+    return objectValue;
+  }
+}
+
+
+const readmeBtn = document.getElementById("readmeBtn");
+const helpOverlay = document.getElementById("helpOverlay");
+const helpCloseBtn = document.getElementById("helpCloseBtn");
+
+function showHelp() {
+  helpOverlay.classList.add("visible");
+}
+
+function hideHelp() {
+  helpOverlay.classList.remove("visible");
+}
+
+readmeBtn.addEventListener("click", showHelp);
+helpCloseBtn.addEventListener("click", hideHelp);
+
+helpOverlay.addEventListener("click", event => {
+  if (event.target === helpOverlay) {
+    hideHelp();
+  }
+});
+
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    hideHelp();
+  }
+});
+
+render();
+</script>
+</body>
+</html>
